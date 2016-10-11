@@ -2181,3 +2181,13 @@ class Unauthorized(NovaException):
 
 class NeutronAdminCredentialConfigurationInvalid(Invalid):
     msg_fmt = _("Networking client is experiencing an unauthorized exception.")
+
+
+class InvalidEmulatorThreadsPolicy(Invalid):
+    msg_fmt = _("CPU emulator threads option requested is invalid, "
+                "given: '%(requested)s', available: '%(available)s'.")
+
+
+class BadRequirementEmulatorThreadsPolicy(Invalid):
+    msg_fmt = _("An isolated CPU emulator threads option requires a dedicated "
+                "CPU policy option.")

@@ -1170,6 +1170,29 @@ def _numa_get_constraints_auto(nodes, flavor):
     return objects.InstanceNUMATopology(cells=cells)
 
 
+def _get_emulator_thread_policy_constraints(flavor, image_meta):
+    """Determines the emulator threads policy"""
+    emu_threads_policy = flavor.get('extra_specs', {}).get(
+        'hw:emulator_threads_policy')
+    LOG.debug("emulator threads policy constraint: %s", emu_threads_policy)
+    if not emu_threads_policy:
+        return
+
+    if emu_threads_policy not in fields.CPUEmulatorThreadsPolicy.ALL:
+        raise exception.InvalidEmulatorThreadsPolicy(
+            requested=emu_threads_policy,
+            available=str(fields.CPUEmulatorThreadsPolicy.ALL))
+
+    if emu_threads_policy == fields.CPUEmulatorThreadsPolicy.ISOLATE:
+        # In order to make available emulator threads policy, a dedicated
+        # CPU policy is necessary.
+        cpu_policy = _get_cpu_policy_constraints(flavor, image_meta)
+        if cpu_policy != fields.CPUAllocationPolicy.DEDICATED:
+            raise exception.BadRequirementEmulatorThreadsPolicy()
+
+    return emu_threads_policy
+
+
 def _validate_numa_nodes(nodes):
     """Validate NUMA nodes number
 
@@ -1271,6 +1294,8 @@ def numa_get_constraints(flavor, image_meta):
     cpu_policy = _get_cpu_policy_constraints(flavor, image_meta)
     cpu_thread_policy = _get_cpu_thread_policy_constraints(flavor, image_meta)
     rt_mask = _get_realtime_mask(flavor, image_meta)
+    emu_thread_policy = _get_emulator_thread_policy_constraints(
+        flavor, image_meta)
 
     # sanity checks
 
@@ -1299,7 +1324,8 @@ def numa_get_constraints(flavor, image_meta):
                 cpu_policy=cpu_policy,
                 cpu_thread_policy=cpu_thread_policy)
         numa_topology = objects.InstanceNUMATopology(cells=[single_cell])
-
+    if emu_thread_policy:
+        numa_topology.emulator_threads_policy = emu_thread_policy
     return numa_topology
 
 
@@ -1336,6 +1362,10 @@ def numa_fit_instance_to_host(
                    'actual': len(host_topology)})
         return
 
+    emulator_threads_policy = None
+    if 'emulator_threads_policy' in instance_topology:
+        emulator_threads_policy = instance_topology.emulator_threads_policy
+
     # TODO(ndipanov): We may want to sort permutations differently
     # depending on whether we want packing/spreading over NUMA nodes
     for host_cell_perm in itertools.permutations(
@@ -1360,7 +1390,9 @@ def numa_fit_instance_to_host(
 
         if not pci_requests or ((pci_stats is not None) and
                 pci_stats.support_requests(pci_requests, cells)):
-            return objects.InstanceNUMATopology(cells=cells)
+            return objects.InstanceNUMATopology(
+                cells=cells,
+                emulator_threads_policy=emulator_threads_policy)
 
 
 def numa_get_reserved_huge_pages():
@@ -1534,8 +1566,11 @@ def instance_topology_from_instance(instance):
                     cpu_thread_policy=cell.get('cpu_thread_policy'),
                     cpus_reserved=cell.get('cpus_reserved'))
                          for cell in dict_cells]
+                emulator_threads_policy = instance_numa_topology.get(
+                    'emulator_threads_policy')
                 instance_numa_topology = objects.InstanceNUMATopology(
-                    cells=cells)
+                    cells=cells,
+                    emulator_threads_policy=emulator_threads_policy)
 
     return instance_numa_topology
 
