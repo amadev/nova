@@ -1112,6 +1112,11 @@ def quota_get_all_by_project(context, project_id):
     return IMPL.quota_get_all_by_project(context, project_id)
 
 
+def quota_get_all_by_projects(context, project_ids):
+    """Retrieve all quotas associated with a given projects."""
+    return IMPL.quota_get_all_by_projects(context, project_ids)
+
+
 def quota_get_per_project_resources():
     """Retrieve the names of resources whose quotas are calculated on a
        per-project rather than a per-user basis.
@@ -1175,6 +1180,11 @@ def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
 def quota_usage_get_all_by_project(context, project_id):
     """Retrieve all usage associated with a given resource."""
     return IMPL.quota_usage_get_all_by_project(context, project_id)
+
+
+def quota_usage_get_all_by_projects(context, project_ids):
+    """Retrieve all usage associated with a given resource."""
+    return IMPL.quota_usage_get_all_by_projects(context, project_ids)
 
 
 def quota_usage_update(context, project_id, user_id, resource, **kwargs):

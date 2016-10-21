@@ -16,13 +16,17 @@
 
 """Quotas for resources per project."""
 
+from collections import defaultdict
 import datetime
 
 from oslo_log import log as logging
+from oslo_utils import excutils
 from oslo_utils import importutils
 from oslo_utils import timeutils
 import six
 
+from keystoneauth1 import session
+from keystoneclient.v3 import client
 import nova.conf
 from nova import db
 from nova import exception
@@ -1504,6 +1508,149 @@ class QuotaEngine(object):
     @property
     def resources(self):
         return sorted(self._resources.keys())
+
+
+# TODO(avolkov): add config variable
+OVERBOOKING_ALLOWED = True
+
+
+class QuotaNode(object):
+    def __init__(
+            self, name, project_id, limits, usages):
+        self.name = name
+        self.project_id = project_id
+        self.limits = limits
+        self.usages = usages
+        self.children = []
+        self.parent = None
+
+    def get_subproject_usages(self, resources):
+        """Get sum of usages resources for all subtree"""
+        usages = self.init_usages(resources)
+        for node in self.children:
+            sp_usages = node.get_subproject_usages(resources)
+            for resource in resources:
+                usages[resource] += (node.usages[resource] +
+                                   sp_usages[resource])
+        return usages
+
+    def init_usages(self, resources):
+        return {name: 0 for name in resources}
+
+    def check(self, deltas):
+        sp_usages = self.get_subproject_usages(deltas)
+        overs = []
+
+        for resource, value in deltas.items():
+            self.usages[resource] += value
+
+        for resource, value in deltas.items():
+            total_usages = sp_usages[resource] + self.usages[resource]
+            if (self.limits[resource] == -1 or
+                    total_usages <= self.limits[resource]):
+                if OVERBOOKING_ALLOWED and self.parent:
+                    self.parent.check(self.init_usages(deltas))
+                continue
+            else:
+                overs.append(resource)
+        if overs:
+            raise exception.OverQuota(
+                project_id=self.project_id,
+                quotas=self.limits,
+                overs=overs,
+                usages={u: {'in_use': v, 'reserved': 0}
+                        for u, v in self.usages.items()})
+        return True
+
+
+class HierarchyQuotaDriver(DbQuotaDriver):
+
+    def _load_projects(self, context):
+        auth = context.get_auth_plugin()
+        # TODO(avolkov): solve access right issue
+        # Project listing in identity service
+        # requires admin rights it can be solved
+        # via modifying policy for project listing
+        # or via providing separate credentials/token
+        # in nova config for getting a projects list
+        # TODO(avolkov): timeout for the request
+        sess = session.Session(auth=auth)
+        cl = client.Client(session=sess)
+        # TODO(avolkov): cache projects
+        return cl.projects.list()
+
+    def _load_quotas(self, context, ids):
+        # TODO(avolkov): add a can't get projects exception
+        # if we can't get project
+        # clear descriptive exception should be provided for end user
+        limits = db.quota_get_all_by_projects(context, ids)
+        usages = db.quota_usage_get_all_by_projects(context, ids)
+        self.limits = defaultdict(dict)
+        self.usages = defaultdict(dict)
+        for id in ids:
+            for resource in resources:
+                res = resource.name
+                try:
+                    limit = limits[id][res]
+                except KeyError:
+                    limit = -1
+                try:
+                    usage = usages[id][res]
+                except KeyError:
+                    usage = 0
+                self.limits[id][res] = limit
+                self.usages[id][res] = usage
+
+    def _get_limits_and_usages(self, project_id):
+        return (self.limits[project_id], self.usages[project_id])
+
+    def build_quota_tree(self, context):
+        projects = self._load_projects(context)
+        self._load_quotas(context, [p.id for p in projects])
+        children = defaultdict(list)
+        self.nodes = {}
+        for project in projects:
+            node = QuotaNode(
+                project.name, project.id,
+                *self._get_limits_and_usages(project.id))
+            self.nodes[project.id] = node
+            if project.parent_id != "default":
+                children[project.parent_id].append(node)
+        for project in projects:
+            self.nodes[project.id].children = children[project.id]
+            for child in children[project.id]:
+                child.parent = self.nodes[project.id]
+
+    def reserve(self, context, resources, deltas, expire=None,
+                project_id=None, user_id=None):
+        if project_id is None:
+            project_id = context.project_id
+        self.build_quota_tree(context)
+        try:
+            self.nodes[project_id].check(deltas)
+        except KeyError:
+            LOG.debug('Project_id %s is not found in loaded projects',
+                      project_id)
+            raise exception.ProjectNotFound(project_id=project_id)
+        except exception.OverQuota as e:
+            with excutils.save_and_reraise_exception():
+                LOG.debug(
+                    'Raise HierarchyQuotaDriver OverQuota exception for '
+                    'project: %(orig_project_name)s (%(orig_project_id)s), '
+                    'culprit: %(project_name)s, (%(orig_project_id)s), '
+                    'overs: %(overs)s, limits: %(limits)s, '
+                    'usages: %(usages)s',
+                    {'orig_project_name': self.nodes[project_id].name,
+                     'orig_project_id': project_id,
+                     'project_name': self.nodes[e.kwargs['project_id']],
+                     'project_id': e.kwargs['project_id'],
+                     'overs': e.kwargs['overs'],
+                     'limits': e.kwargs['quotas'],
+                     'usages': e.kwargs['usages']})
+
+        return super(HierarchyQuotaDriver, self).reserve(
+            context, resources, deltas, expire=expire,
+            project_id=project_id, user_id=user_id)
 
 
 def _keypair_get_count_by_user(*args, **kwargs):

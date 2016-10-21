@@ -3365,6 +3365,21 @@ def quota_get_all_by_project(context, project_id):
 
 @require_context
 @main_context_manager.reader
+def quota_get_all_by_projects(context, project_ids):
+    rows = model_query(context, models.Quota, read_deleted="no").\
+                   filter(
+                       models.Quota.project_id.in_(project_ids)).\
+                   all()
+
+    result = collections.defaultdict(dict)
+    for row in rows:
+        result[row.project_id][row.resource] = row.hard_limit
+
+    return result
+
+
+@require_context
+@main_context_manager.reader
 def quota_get_all(context, project_id):
     result = model_query(context, models.ProjectUserQuota).\
                    filter_by(project_id=project_id).\
@@ -3525,6 +3540,23 @@ def _quota_usage_get_all(context, project_id, user_id=None):
 @main_context_manager.reader
 def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
     return _quota_usage_get_all(context, project_id, user_id=user_id)
+
+
+@require_context
+@main_context_manager.reader
+def quota_usage_get_all_by_projects(context, project_ids):
+    query = model_query(context, models.QuotaUsage, read_deleted="no").\
+                   filter(models.QuotaUsage.project_id.in_(project_ids))
+
+    rows = query.all()
+    result = {}
+    for row in rows:
+        result.setdefault(
+            row.project_id,
+            collections.defaultdict(int))[row.resource] += (
+                row.in_use + row.reserved)
+
+    return result
 
 
 @require_context
