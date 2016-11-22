@@ -1111,7 +1111,7 @@ object_data = {
     'InstanceList': '2.2-ff71772c7bf6d72f6ef6eee0199fb1c9',
     'InstanceMapping': '1.0-65de80c491f54d19374703c0753c4d47',
     'InstanceMappingList': '1.0-9e982e3de1613b9ada85e35f69b23d47',
-    'InstanceNUMACell': '1.3-6991a20992c5faa57fae71a45b40241b',
+    'InstanceNUMACell': '1.4-ab3382b065ebf008061037baf6772bbf',
     'InstanceNUMATopology': '1.3-ec0030cb0402a49c96da7051c037082a',
     'InstancePCIRequest': '1.1-b1d75ebc716cb12906d9d513890092bf',
     'InstancePCIRequests': '1.1-65e38083177726d806684cb1cc0136d2',

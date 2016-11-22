@@ -188,6 +188,28 @@ class _TestInstanceNUMATopology(object):
         topo_obj = objects.InstanceNUMATopology.obj_from_primitive(primitive)
         self.assertFalse(topo_obj.emulator_threads_isolated)
 
+    def test_cpus_reserved(self):
+        topology = objects.InstanceNUMATopology(
+            instance_uuid = fake_instance_uuid,
+            cells=[
+                objects.InstanceNUMACell(
+                    id=0, cpuset=set([1, 2]), memory=512, pagesize=2048,
+                    cpus_reserved=set([3, 7])),
+                objects.InstanceNUMACell(
+                    id=1, cpuset=set([3, 4]), memory=512, pagesize=2048,
+                    cpus_reserved=set([9, 12]))
+            ])
+        self.assertEqual(set([3, 7]), topology.cells[0].cpus_reserved)
+        self.assertEqual(set([9, 12]), topology.cells[1].cpus_reserved)
+
+    def test_obj_make_compatible_numa_cell_pre_1_4(self):
+        topo_obj = objects.InstanceNUMACell(
+            cpus_reserved=set([1, 2]))
+        versions = ovo_base.obj_tree_get_versions('InstanceNUMACell')
+        primitive = topo_obj.obj_to_primitive(target_version='1.3',
+                                              version_manifest=versions)
+        self.assertNotIn('cpus_reserved', primitive)
+
 
 class TestInstanceNUMATopology(test_objects._LocalTest,
                                _TestInstanceNUMATopology):
